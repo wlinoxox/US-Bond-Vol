@@ -18,6 +18,6 @@
 
 | 檔案 | 說明 |
 |---|---|
-| [excel/us_bond_vol_rv_iv.xlsx](excel/us_bond_vol_rv_iv.xlsx) | Bloomberg BDH 抓 10Y 殖利率、Swap、MOVE、Swaption IV，計算 RV、IV − RV、事後 VRP，並對照 Kim-Wright TP |
+| [excel/us_bond_vol_rv_iv.xlsx](excel/us_bond_vol_rv_iv.xlsx) | Bloomberg BDH 抓 10Y 殖利率、Swap、MOVE、Swaption IV，計算 RV、IV − RV、事後 VRP，拆解 10Y = TIPS + BEI，並對照 Kim-Wright TP |
 | [excel/build_workbook.py](excel/build_workbook.py) | 重新產生上面的 Excel（更新 Kim-Wright 資料後執行）；`--sample` 產生模擬數據測試檔 |
 | [data/THREEFYTP10.csv](data/THREEFYTP10.csv) | Kim-Wright 10Y Term Premium（FRED：THREEFYTP10，單位 %） |

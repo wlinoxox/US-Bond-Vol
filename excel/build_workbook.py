@@ -1,4 +1,4 @@
-"""產生 us_bond_vol_rv_iv.xlsx：用 Bloomberg BDH 抓資料，計算 RV 與 IV − RV，並對照 Kim-Wright TP。
+"""產生 us_bond_vol_rv_iv.xlsx：用 Bloomberg BDH 抓資料，計算 RV 與 IV − RV，拆解 10Y 為 TIPS 與 BEI，並對照 Kim-Wright TP。
 
 用法：
     python excel/build_workbook.py            # 產生正式檔（BDH 公式，需在 Bloomberg Excel 開啟）
@@ -81,7 +81,7 @@ def build_readme(wb, kw_last):
         ("Settings：所有輸入參數（黃底藍字＝可修改）。", F_BASE),
         ("BBG_Data：BDH 公式抓取的原始資料。統一用 Days=W（週間日）＋ Fill=P（假日沿用前值），讓不同 ticker 的日期對齊在同一列。", F_BASE),
         ("KW_TP：Kim-Wright 10Y Term Premium（FRED：THREEFYTP10），使用者下載的靜態資料，最後一筆 " + kw_last.isoformat() + "。", F_BASE),
-        ("Calc：每日變動（bp）、滾動 RV、IV − RV、事後 VRP、Kim-Wright TP 對照。", F_BASE),
+        ("Calc：每日變動（bp）、滾動 RV、IV − RV、事後 VRP、Kim-Wright TP 對照，以及 10Y = TIPS + BEI 的拆解。", F_BASE),
         ("Dashboard：最新數值摘要與圖表。", F_BASE),
         ("", F_BASE),
         ("計算定義", F_BOLD),
@@ -89,9 +89,12 @@ def build_readme(wb, kw_last):
         ("RV（年化 Normal Vol，bp/y）= 最近 N 個每日變動的樣本標準差 × √252。", F_BASE),
         ("IV − RV（即時近似）：Swaption IV − 10Y Swap 的 RV（63 日，對應 3 個月期限）；MOVE − 10Y 公債的 RV（21 日，對應 1 個月期限）。", F_BASE),
         ("事後 VRP：今天的 Swaption IV − 接下來 63 個交易日實際發生的 Swap RV。最近 63 天還沒有結果，會留空。", F_BASE),
+        ("實質利率拆解（市場口徑）：10Y 名目 = 10Y TIPS 實質殖利率 + 10Y BEI。相對基準日的變動：Δ10Y = ΔTIPS（實質利率貢獻）+ ΔBEI（通膨預期貢獻）。", F_BASE),
+        ("「名目 − TIPS − BEI」欄是檢查用，應接近 0；若差很多，代表 BEI ticker 的口徑和 10Y 名目 / TIPS 不一致。", F_BASE),
+        ("注意：TIPS 殖利率含實質期限溢酬與流動性溢酬，BEI 含通膨風險溢酬；ΔTIPS 不等於「實質利率預期」的變動，要再拆需用 DKW 等模型。", F_BASE),
         ("", F_BASE),
         ("注意事項", F_BOLD),
-        ("• Ticker 是依記憶填寫的預設值，第一次使用請先在 Terminal 確認（特別是 USOSFR10 Curncy 與 Swaption ticker）。", F_BASE),
+        ("• Ticker 是依記憶填寫的預設值，第一次使用請先在 Terminal 確認（特別是 USOSFR10 Curncy、USGGT10Y Index、USGGBE10 Index 與 Swaption ticker）。", F_BASE),
         ("• Fill=P 會讓美國假日的每日變動為 0，RV 會略為低估（影響約數個百分點）。若要更精確，可改用 Days=T 但需自行對齊日期。", F_BASE),
         ("• MOVE 是 1 個月期、2Y/5Y/10Y/30Y 加權的公債選擇權 IV，和 10Y 單一期限的 RV 比較只是近似。", F_BASE),
         ("• Calc 中無法計算的格子（RV 暖機期、預留的空白列）會顯示 N/A 錯誤值，這是刻意的，讓圖表在缺資料處斷開而不是掉到 0。", F_BASE),
@@ -125,6 +128,10 @@ def build_settings(wb, sample):
         ("短期 RV 視窗（交易日）", 21, "約 1 個月，對應 MOVE（1 個月期選擇權）。"),
         ("長期 RV 視窗（交易日）", 63, "約 3 個月，對應 3m10y Swaption。"),
         ("年化天數", 252, "年化 = 日標準差 × √年化天數。"),
+        ("10Y TIPS 實質殖利率 ticker", "USGGT10Y Index", "10Y TIPS 殖利率（實質利率，市場口徑），單位 %。請在 Terminal 確認 ticker。"),
+        ("10Y BEI ticker", "USGGBE10 Index", "10Y Breakeven Inflation，單位 %。請在 Terminal 確認 ticker。"),
+        ("分解基準日", date(2025, 12, 31), "計算「相對基準日的變動」的起點，例如前一年底或開戰日。"),
+        ("基準日所在列（自動）", "=SUMPRODUCT(MAX(ISNUMBER(Calc!$A$2:$A$LASTROW)*(Calc!$A$2:$A$LASTROW<=$B$16)*ROW(Calc!$A$2:$A$LASTROW)))", "Calc 中日期 ≤ 基準日的最後一列；0 代表基準日早於資料起點。"),
     ]
     for i, (label, value, note) in enumerate(rows, start=3):
         if label == "（空白）":
@@ -136,15 +143,17 @@ def build_settings(wb, sample):
         else:
             c.font = F_INPUT
             c.fill = FILL_INPUT
+        if isinstance(value, str) and "LASTROW" in value:
+            c.value = value.replace("LASTROW", str(LAST))
         if isinstance(value, date) or value == "=TODAY()":
             c.number_format = "yyyy-mm-dd"
         ws.cell(row=i, column=3, value=note).font = F_BASE
         ws.cell(row=i, column=3).alignment = WRAP
     ws["B9"].comment = Comment("在 VCUB 中選 Normal Vol，找到 3M expiry × 10Y tenor 的格子，右鍵或滑鼠停留取得 ticker。", "README")
-    ws["A16"] = "圖例：黃底藍字＝可修改的輸入；黑字＝公式；綠字＝引用其他分頁。"
-    ws["A16"].font = F_BASE
-    ws["A17"] = "範例：10Y 公債殖利率 ticker 填 USGG10YR Index；RV 視窗填整數，例如 21。"
-    ws["A17"].font = F_BASE
+    ws["A19"] = "圖例：黃底藍字＝可修改的輸入；黑字＝公式；綠字＝引用其他分頁。"
+    ws["A19"].font = F_BASE
+    ws["A20"] = "範例：10Y 公債殖利率 ticker 填 USGG10YR Index；RV 視窗填整數，例如 21。"
+    ws["A20"].font = F_BASE
     # 參數位置（供其他分頁引用）
     return {
         "start": "Settings!$B$3",
@@ -156,36 +165,42 @@ def build_settings(wb, sample):
         "w_short": "Settings!$B$11",
         "w_long": "Settings!$B$12",
         "ann": "Settings!$B$13",
+        "tips": "Settings!$B$14",
+        "bei": "Settings!$B$15",
+        "base_row": "Settings!$B$17",
     }
 
 
 def build_bbg(wb, p, sample):
     ws = wb.create_sheet("BBG_Data")
-    header(ws, 1, ["日期", "10Y 公債殖利率 (%)", "10Y SOFR Swap (%)", "MOVE (bp)", "3m10y Swaption IV (bp/y)"],
-           [12, 18, 18, 12, 22])
+    header(ws, 1, ["日期", "10Y 公債殖利率 (%)", "10Y SOFR Swap (%)", "MOVE (bp)", "3m10y Swaption IV (bp/y)",
+                   "10Y TIPS 實質殖利率 (%)", "10Y BEI (%)"],
+           [12, 18, 18, 12, 22, 20, 14])
     ovr = '"Days=W","Fill=P"'
     if not sample:
         ws["A2"] = f'=BDH({p["ust"]},"PX_LAST",{p["start"]},{p["end"]},"Dts=S",{ovr})'
         ws["C2"] = f'=BDH({p["swap"]},"PX_LAST",{p["start"]},{p["end"]},"Dts=H",{ovr})'
         ws["D2"] = f'=BDH({p["move"]},"PX_LAST",{p["start"]},{p["end"]},"Dts=H",{ovr})'
         ws["E2"] = f'=IF({p["swpn"]}="","",BDH({p["swpn"]},"PX_LAST",{p["start"]},{p["end"]},"Dts=H",{ovr}))'
-        for col in "ACDE":
+        ws["F2"] = f'=BDH({p["tips"]},"PX_LAST",{p["start"]},{p["end"]},"Dts=H",{ovr})'
+        ws["G2"] = f'=BDH({p["bei"]},"PX_LAST",{p["start"]},{p["end"]},"Dts=H",{ovr})'
+        for col in "ACDEFG":
             ws[f"{col}2"].font = F_LINK
-        ws["G1"] = "說明"
-        ws["G1"].font = F_BOLD
+        ws["I1"] = "說明"
+        ws["I1"].font = F_BOLD
         notes = [
             "A2 的 BDH 會同時輸出日期（A 欄）與 10Y 殖利率（B 欄）。",
-            "C2、D2、E2 用相同日曆（Days=W, Fill=P）且隱藏日期（Dts=H），所以會和 A 欄日期對齊。",
+            "C2～G2 用相同日曆（Days=W, Fill=P）且隱藏日期（Dts=H），所以會和 A 欄日期對齊。",
             "請勿在這些公式下方輸入任何內容，以免擋住 BDH 輸出。",
         ]
         for i, n in enumerate(notes, start=2):
-            ws.cell(row=i, column=7, value=n).font = F_BASE
-        ws.column_dimensions["G"].width = 80
+            ws.cell(row=i, column=9, value=n).font = F_BASE
+        ws.column_dimensions["I"].width = 80
     else:
         # 測試檔：用模擬數據（隨機漫步）取代 BDH，驗證 Calc 公式
         rng = random.Random(42)
         d = date(2024, 1, 1)
-        ust, swap, move, swpn = 3.9, 3.6, 110.0, 95.0
+        ust, swap, move, swpn, bei = 3.9, 3.6, 110.0, 95.0, 2.3
         r = FIRST
         while d <= date(2026, 10, 2):
             if d.weekday() < 5:
@@ -194,14 +209,17 @@ def build_bbg(wb, p, sample):
                 swap += shock * 0.95 + rng.gauss(0, 0.01)
                 move = max(60, move + rng.gauss(0, 2.5))
                 swpn = max(50, swpn + rng.gauss(0, 1.8))
+                bei += rng.gauss(0, 0.02)
                 ws.cell(row=r, column=1, value=d).number_format = "yyyy-mm-dd"
                 ws.cell(row=r, column=2, value=round(ust, 4))
                 ws.cell(row=r, column=3, value=round(swap, 4))
                 ws.cell(row=r, column=4, value=round(move, 2))
                 ws.cell(row=r, column=5, value=round(swpn, 2))
+                ws.cell(row=r, column=6, value=round(ust - bei, 4))
+                ws.cell(row=r, column=7, value=round(bei, 4))
                 r += 1
             d += timedelta(days=1)
-        for row in ws.iter_rows(min_row=FIRST, max_row=r - 1, max_col=5):
+        for row in ws.iter_rows(min_row=FIRST, max_row=r - 1, max_col=7):
             for c in row:
                 c.font = F_INPUT
     ws.freeze_panes = "A2"
@@ -230,8 +248,10 @@ def build_calc(wb, p, kw_last_row):
         "MOVE − RV 公債短期", "Swaption IV − RV Swap 長期",
         "未來長期視窗 Swap RV (bp/y)", "事後 VRP：Swaption IV − 未來 RV",
         "Kim-Wright TP (bp)",
+        "10Y TIPS (%)", "10Y BEI (%)", "檢查：名目 − TIPS − BEI (bp)",
+        "Δ10Y 名目 相對基準日 (bp)", "ΔTIPS 實質利率貢獻 (bp)", "ΔBEI 通膨預期貢獻 (bp)", "ΔKim-Wright TP 相對基準日 (bp)",
     ]
-    header(ws, 1, labels, [12, 11, 11, 10, 12, 11, 11, 12, 12, 12, 12, 13, 14, 14, 15, 12])
+    header(ws, 1, labels, [12, 11, 11, 10, 12, 11, 11, 12, 12, 12, 12, 13, 14, 14, 15, 12, 11, 11, 13, 13, 13, 13, 14])
     ws.row_dimensions[1].height = 45
     kw_a = f"KW_TP!$A$2:$A${kw_last_row}"
     kw_c = f"KW_TP!$C$2:$C${kw_last_row}"
@@ -262,7 +282,22 @@ def build_calc(wb, p, kw_last_row):
         ws[f"O{r}"] = f"=IF(AND(ISNUMBER(E{r}),ISNUMBER(N{r})),E{r}-N{r},NA())"
         ws[f"P{r}"] = (f'=IF(NOT(ISNUMBER($A{r})),NA(),IF(OR($A{r}<MIN({kw_a}),$A{r}>MAX({kw_a})),NA(),'
                        f'INDEX({kw_c},MATCH($A{r},{kw_a},1))))')
+        for col, src in (("Q", "F"), ("R", "G")):
+            ws[f"{col}{r}"] = f'=IF(AND(ISNUMBER($A{r}),ISNUMBER(BBG_Data!{src}{r})),BBG_Data!{src}{r},NA())'
+        ws[f"S{r}"] = f"=IF(AND(ISNUMBER(B{r}),ISNUMBER(Q{r}),ISNUMBER(R{r})),(B{r}-Q{r}-R{r})*100,NA())"
+        br = p["base_row"]
+        for dst, src in (("T", "B"), ("U", "Q"), ("V", "R")):
+            ws[f"{dst}{r}"] = (f"=IF(AND(ISNUMBER({src}{r}),{br}>0),IF(ISNUMBER(INDEX(${src}:${src},{br})),"
+                               f"({src}{r}-INDEX(${src}:${src},{br}))*100,NA()),NA())")
+        ws[f"W{r}"] = (f"=IF(AND(ISNUMBER(P{r}),{br}>0),IF(ISNUMBER(INDEX($P:$P,{br})),"
+                       f"P{r}-INDEX($P:$P,{br}),NA()),NA())")
         ws[f"A{r}"].number_format = "yyyy-mm-dd"
+        for col in "QR":
+            ws[f"{col}{r}"].number_format = "0.000"
+            ws[f"{col}{r}"].font = F_LINK
+        for col in "STUVW":
+            ws[f"{col}{r}"].number_format = "0.0"
+            ws[f"{col}{r}"].font = F_BASE
         for col in "BC":
             ws[f"{col}{r}"].number_format = "0.000"
         for col in "DEFGHIJKLMNOP":
@@ -304,6 +339,14 @@ def build_dashboard(wb, kw_last_row):
         ("Kim-Wright TP 最新日期", f"=INDEX({kw_a},COUNT({kw_a}))", "", "yyyy-mm-dd"),
         ("Kim-Wright TP 今年以來變動 (bp)",
          f"=B12-INDEX({kw_c},MATCH(DATE(YEAR(B13)-1,12,31),{kw_a},1))", "相對前一年最後一筆。", "0.0"),
+        ("10Y TIPS 實質殖利率 (%)", at("Q"), "市場口徑的實質利率。", "0.000"),
+        ("10Y BEI (%)", at("R"), "", "0.000"),
+        ("分解基準日", "=Settings!B16", "在 Settings!B16 修改。", "yyyy-mm-dd"),
+        ("Δ10Y 名目（基準日以來，bp）", at("T"), "", "0.0"),
+        ("ΔTIPS：實質利率貢獻 (bp)", at("U"), "含實質期限溢酬與流動性溢酬。", "0.0"),
+        ("ΔBEI：通膨預期貢獻 (bp)", at("V"), "含通膨風險溢酬。", "0.0"),
+        ("實質利率貢獻占比", '=IFERROR(B19/B18,"n/a")', "ΔTIPS ÷ Δ10Y。", "0%"),
+        ("ΔKim-Wright TP（基準日以來，bp）", at("W"), "模型口徑，和上面的市場口徑不能直接相加；Kim-Wright 資料較晚時顯示 n/a。", "0.0"),
     ]
     for i, (label, formula, note, fmt) in enumerate(rows, start=3):
         ws.cell(row=i, column=1, value=label).font = F_BASE
@@ -334,6 +377,7 @@ def build_dashboard(wb, kw_last_row):
     line("MOVE vs. 10Y 公債 RV（短期）", [4, 8], "E18", "bp")
     line("IV − RV", [12, 13], "E34", "bp/y")
     line("事後 VRP 與 Kim-Wright TP", [15, 16], "E50", "bp")
+    line("10Y 拆解：相對基準日的變動", [20, 21, 22, 23], "E66", "bp")
 
 
 def main():
