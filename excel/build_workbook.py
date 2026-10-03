@@ -4,8 +4,9 @@
     python excel/build_workbook.py            # 產生正式檔（BDH 公式，需在 Bloomberg Excel 開啟）
     python excel/build_workbook.py --sample   # 產生以模擬數據取代 BDH 的測試檔，用來驗證公式
 
-Kim-Wright 資料來源：data/THREEFYTP10.csv（FRED 序列 THREEFYTP10，單位 %）。
-更新 Kim-Wright 時，覆蓋該 CSV 後重新執行本腳本即可。
+Kim-Wright 資料來源：data/THREEFYTP10.csv（FRED 序列 THREEFYTP10，單位 %，日資料）。
+DKW 資料來源：data/DKW_updates.csv（Fed staff D'Amico-Kim-Wei 拆解，單位 %，每月更新）。
+更新任一資料時，覆蓋對應 CSV 後重新執行本腳本即可。DKW 為主軸，Kim-Wright 用於 DKW 尚未涵蓋的最新日期與交叉驗證。
 """
 
 import csv
@@ -24,6 +25,10 @@ from openpyxl.utils import get_column_letter
 
 ROOT = Path(__file__).resolve().parent.parent
 KW_CSV = ROOT / "data" / "THREEFYTP10.csv"
+DKW_CSV = ROOT / "data" / "DKW_updates.csv"
+DKW_START = date(2015, 1, 1)  # DKW 分頁只放這天以後的資料
+DKW_COLS = ["exp.real.short.rate.10", "real.term.prem.10", "exp.inflation.10", "inflation.risk.prem.10",
+            "tips.liq.prem.10", "nominal.yield.fitted.10"]
 OUT = ROOT / "excel" / "us_bond_vol_rv_iv.xlsx"
 SAMPLE_OUT = ROOT / "excel" / "us_bond_vol_rv_iv_sample.xlsx"  # 測試用，不納入版控
 
@@ -64,7 +69,23 @@ def load_kw():
     return rows
 
 
-def build_readme(wb, kw_last):
+def load_dkw():
+    rows = []
+    with open(DKW_CSV, newline="") as f:
+        lines = f.read().splitlines()
+    start = next(i for i, l in enumerate(lines) if l.startswith('"date"'))
+    for rec in csv.DictReader(lines[start:]):
+        d = datetime.strptime(rec["date"], "%Y-%m-%d").date()
+        if d < DKW_START:
+            continue
+        vals = [rec[c] for c in DKW_COLS]
+        if any(v in ("", "NA") for v in vals[:4] + vals[5:]):
+            continue
+        rows.append((d, [None if v in ("", "NA") else float(v) for v in vals]))
+    return rows
+
+
+def build_readme(wb, kw_last, dkw_last):
     ws = wb.active
     ws.title = "README"
     ws.column_dimensions["A"].width = 110
@@ -81,7 +102,8 @@ def build_readme(wb, kw_last):
         ("Settings：所有輸入參數（黃底藍字＝可修改）。", F_BASE),
         ("BBG_Data：BDH 公式抓取的原始資料。統一用 Days=W（週間日）＋ Fill=P（假日沿用前值），讓不同 ticker 的日期對齊在同一列。", F_BASE),
         ("KW_TP：Kim-Wright 10Y Term Premium（FRED：THREEFYTP10），使用者下載的靜態資料，最後一筆 " + kw_last.isoformat() + "。", F_BASE),
-        ("Calc：每日變動（bp）、滾動 RV、IV − RV、事後 VRP、Kim-Wright TP 對照，以及 10Y = TIPS + BEI 的拆解。", F_BASE),
+        ("DKW_10Y：D'Amico-Kim-Wei 10Y 拆解（Fed staff，每月更新），最後一筆 " + dkw_last.isoformat() + "。名目殖利率 = 預期實質短率 + 實質 TP + 預期通膨 + 通膨風險溢酬；名目 TP = 實質 TP + 通膨風險溢酬。", F_BASE),
+        ("Calc：每日變動（bp）、滾動 RV、IV − RV、事後 VRP、Kim-Wright TP 對照、10Y = TIPS + BEI 的拆解，以及 DKW 各成分相對基準日的變動。", F_BASE),
         ("Dashboard：最新數值摘要與圖表。", F_BASE),
         ("", F_BASE),
         ("計算定義", F_BOLD),
@@ -99,6 +121,8 @@ def build_readme(wb, kw_last):
         ("• MOVE 是 1 個月期、2Y/5Y/10Y/30Y 加權的公債選擇權 IV，和 10Y 單一期限的 RV 比較只是近似。", F_BASE),
         ("• Calc 中無法計算的格子（RV 暖機期、預留的空白列）會顯示 N/A 錯誤值，這是刻意的，讓圖表在缺資料處斷開而不是掉到 0。", F_BASE),
         ("• 若在 Excel 365 看到公式變成 =@BDH(...) 且只抓到一筆，把 @ 刪掉重新輸入即可。", F_BASE),
+        ("• TP 模型分工：DKW 為主軸（能拆實質 TP 與通膨風險溢酬）；Kim-Wright 為日資料，用於 DKW 尚未涵蓋的最新日期與交叉驗證。兩者都出自 Fed 的 Don Kim，並非完全獨立。", F_BASE),
+        ("• DKW 資料不會自動更新：下載 DKW_updates.csv 覆蓋 data/ 後重新執行 build_workbook.py，或直接貼到 DKW_10Y 分頁。", F_BASE),
         ("• Kim-Wright 資料不會自動更新：到 FRED 下載新的 THREEFYTP10，貼到 KW_TP 分頁（日期在 A 欄、% 在 B 欄），C 欄公式往下複製即可。", F_BASE),
         ("• Calc 預留 " + str(N_ROWS) + " 列；若起始日期太早導致資料超過，請把 Calc 最後一列公式往下複製。", F_BASE),
     ]
@@ -239,7 +263,29 @@ def build_kw(wb, kw):
     return len(kw) + 1
 
 
-def build_calc(wb, p, kw_last_row):
+def build_dkw(wb, dkw):
+    ws = wb.create_sheet("DKW_10Y")
+    header(ws, 1, ["日期", "預期實質短率 (%)", "實質 TP (%)", "預期通膨 (%)", "通膨風險溢酬 (%)",
+                   "TIPS 流動性溢酬 (%)", "名目殖利率 fitted (%)", "名目 TP (%)"],
+           [12, 16, 12, 12, 16, 18, 18, 12])
+    for i, (d, vals) in enumerate(dkw, start=2):
+        c = ws.cell(row=i, column=1, value=d)
+        c.number_format = "yyyy-mm-dd"
+        c.font = F_INPUT
+        for j, v in enumerate(vals, start=2):
+            c = ws.cell(row=i, column=j, value=v)
+            c.font = F_INPUT
+            c.number_format = "0.0000"
+        c = ws.cell(row=i, column=8, value=f"=C{i}+E{i}")
+        c.number_format = "0.0000"
+    ws["J1"] = ("來源：Fed staff DKW_updates.csv（D'Amico, Kim & Wei 2018；Kim, Walsh & Wei 2019 FEDS Notes），"
+                f"由使用者下載；只保留 {DKW_START.isoformat()} 之後且四個成分齊全的日期。非 Fed 官方統計，可能修正。")
+    ws["J1"].font = F_BASE
+    ws.freeze_panes = "A2"
+    return len(dkw) + 1
+
+
+def build_calc(wb, p, kw_last_row, dkw_last_row):
     ws = wb.create_sheet("Calc")
     labels = [
         "日期", "10Y 公債 (%)", "10Y Swap (%)", "MOVE (bp)", "Swaption IV (bp/y)",
@@ -250,8 +296,10 @@ def build_calc(wb, p, kw_last_row):
         "Kim-Wright TP (bp)",
         "10Y TIPS (%)", "10Y BEI (%)", "檢查：名目 − TIPS − BEI (bp)",
         "Δ10Y 名目 相對基準日 (bp)", "ΔTIPS 實質利率貢獻 (bp)", "ΔBEI 通膨預期貢獻 (bp)", "ΔKim-Wright TP 相對基準日 (bp)",
+        "DKW Δ預期實質短率 (bp)", "DKW Δ實質 TP (bp)", "DKW Δ預期通膨 (bp)", "DKW Δ通膨風險溢酬 (bp)", "DKW Δ名目 TP (bp)",
     ]
-    header(ws, 1, labels, [12, 11, 11, 10, 12, 11, 11, 12, 12, 12, 12, 13, 14, 14, 15, 12, 11, 11, 13, 13, 13, 13, 14])
+    header(ws, 1, labels, [12, 11, 11, 10, 12, 11, 11, 12, 12, 12, 12, 13, 14, 14, 15, 12, 11, 11, 13, 13, 13, 13, 14,
+                           13, 12, 12, 13, 12])
     ws.row_dimensions[1].height = 45
     kw_a = f"KW_TP!$A$2:$A${kw_last_row}"
     kw_c = f"KW_TP!$C$2:$C${kw_last_row}"
@@ -291,6 +339,14 @@ def build_calc(wb, p, kw_last_row):
                                f"({src}{r}-INDEX(${src}:${src},{br}))*100,NA()),NA())")
         ws[f"W{r}"] = (f"=IF(AND(ISNUMBER(P{r}),{br}>0),IF(ISNUMBER(INDEX($P:$P,{br})),"
                        f"P{r}-INDEX($P:$P,{br}),NA()),NA())")
+        dkw_a = f"DKW_10Y!$A$2:$A${dkw_last_row}"
+        for dst, src in (("X", "B"), ("Y", "C"), ("Z", "D"), ("AA", "E"), ("AB", "H")):
+            rng_ = f"DKW_10Y!${src}$2:${src}${dkw_last_row}"
+            ws[f"{dst}{r}"] = (f"=IF(NOT(ISNUMBER($A{r})),NA(),IF(OR($A{r}<MIN({dkw_a}),$A{r}>MAX({dkw_a}),"
+                               f"Settings!$B$16<MIN({dkw_a})),NA(),"
+                               f"(INDEX({rng_},MATCH($A{r},{dkw_a},1))-INDEX({rng_},MATCH(Settings!$B$16,{dkw_a},1)))*100))")
+            ws[f"{dst}{r}"].number_format = "0.0"
+            ws[f"{dst}{r}"].font = F_LINK
         ws[f"A{r}"].number_format = "yyyy-mm-dd"
         for col in "QR":
             ws[f"{col}{r}"].number_format = "0.000"
@@ -310,7 +366,7 @@ def build_calc(wb, p, kw_last_row):
     ws.freeze_panes = "B2"
 
 
-def build_dashboard(wb, kw_last_row):
+def build_dashboard(wb, kw_last_row, dkw_last_row):
     ws = wb.create_sheet("Dashboard")
     ws.column_dimensions["A"].width = 34
     ws.column_dimensions["B"].width = 16
@@ -321,6 +377,12 @@ def build_dashboard(wb, kw_last_row):
     calc = f"Calc!$A${FIRST}:$A${LAST}"
     kw_a = f"KW_TP!$A$2:$A${kw_last_row}"
     kw_c = f"KW_TP!$C$2:$C${kw_last_row}"
+
+    dkw_a = f"DKW_10Y!$A$2:$A${dkw_last_row}"
+
+    def dkw_d(col):
+        rng_ = f"DKW_10Y!${col}$2:${col}${dkw_last_row}"
+        return (f'=IFERROR((INDEX({rng_},COUNT({dkw_a}))-INDEX({rng_},MATCH(Settings!$B$16,{dkw_a},1)))*100,"n/a")')
 
     def at(col):
         return f"=IFERROR(INDEX(Calc!${col}${FIRST}:${col}${LAST},$B$3),\"n/a\")"
@@ -347,6 +409,15 @@ def build_dashboard(wb, kw_last_row):
         ("ΔBEI：通膨預期貢獻 (bp)", at("V"), "含通膨風險溢酬。", "0.0"),
         ("實質利率貢獻占比", '=IFERROR(B19/B18,"n/a")', "ΔTIPS ÷ Δ10Y。", "0%"),
         ("ΔKim-Wright TP（基準日以來，bp）", at("W"), "模型口徑，和上面的市場口徑不能直接相加；Kim-Wright 資料較晚時顯示 n/a。", "0.0"),
+        ("DKW 最新日期", f"=INDEX({dkw_a},COUNT({dkw_a}))", "DKW 每月更新；以下為基準日到此日的變動。", "yyyy-mm-dd"),
+        ("DKW Δ名目殖利率 fitted (bp)", dkw_d("G"), "= 下面四個成分的加總。", "0.0"),
+        ("DKW Δ預期實質短率 (bp)", dkw_d("B"), "政策路徑與 r* 的預期。", "0.0"),
+        ("DKW Δ實質 TP (bp)", dkw_d("C"), "TIPS「實質利率」上升中屬於期限溢酬的部分。", "0.0"),
+        ("DKW Δ預期通膨 (bp)", dkw_d("D"), "", "0.0"),
+        ("DKW Δ通膨風險溢酬 (bp)", dkw_d("E"), "", "0.0"),
+        ("DKW Δ名目 TP (bp)", dkw_d("H"), "= 實質 TP + 通膨風險溢酬，可與 Kim-Wright 對照。", "0.0"),
+        ("DKW 名目 TP 占名目變動比例", '=IFERROR(B29/B24,"n/a")', "", "0%"),
+        ("DKW 實質 TP 占實質部分比例", '=IFERROR(B26/(B25+B26),"n/a")', "實質部分 = 預期實質短率 + 實質 TP。", "0%"),
     ]
     for i, (label, formula, note, fmt) in enumerate(rows, start=3):
         ws.cell(row=i, column=1, value=label).font = F_BASE
@@ -378,18 +449,21 @@ def build_dashboard(wb, kw_last_row):
     line("IV − RV", [12, 13], "E34", "bp/y")
     line("事後 VRP 與 Kim-Wright TP", [15, 16], "E50", "bp")
     line("10Y 拆解：相對基準日的變動", [20, 21, 22, 23], "E66", "bp")
+    line("DKW 10Y 拆解：相對基準日的變動", [24, 25, 26, 27, 28], "E82", "bp")
 
 
 def main():
     sample = "--sample" in sys.argv
     kw = load_kw()
+    dkw = load_dkw()
     wb = Workbook()
-    build_readme(wb, kw[-1][0])
+    build_readme(wb, kw[-1][0], dkw[-1][0])
     p = build_settings(wb, sample)
     build_bbg(wb, p, sample)
     kw_last_row = build_kw(wb, kw)
-    build_calc(wb, p, kw_last_row)
-    build_dashboard(wb, kw_last_row)
+    dkw_last_row = build_dkw(wb, dkw)
+    build_calc(wb, p, kw_last_row, dkw_last_row)
+    build_dashboard(wb, kw_last_row, dkw_last_row)
     for ws in wb.worksheets:
         for row in ws.iter_rows():
             for c in row:
