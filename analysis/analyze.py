@@ -122,6 +122,11 @@ def main():
         "bei_0915": r(lvl("BEI10Y", "2026-09-15"), 4), "bei_0917": r(lvl("BEI10Y", "2026-09-17"), 4),
         "bei_asof": r(lvl("BEI10Y", asof), 4),
         "kw_1231": r(lvl("KW_TP10_bp", "2025-12-31")),
+        "kw_may_peak": r(df["KW_TP10_bp"]["2026-05":"2026-06"].max()),
+        "kw_may_peak_day": str(df["KW_TP10_bp"]["2026-05":"2026-06"].idxmax().date()),
+        "kw_jun_low": r(df["KW_TP10_bp"]["2026-06":"2026-07-15"].min()),
+        "kw_jun_low_day": str(df["KW_TP10_bp"]["2026-06":"2026-07-15"].idxmin().date()),
+        "ust2_1231": r(lvl("UST2Y", "2025-12-31"), 3), "ust2_1001": r(lvl("UST2Y", "2026-10-01"), 3),
         "kw_0831": r(lvl("KW_TP10_bp", "2026-08-31")), "kw_0922": r(lvl("KW_TP10_bp", "2026-09-22")),
         "kw_last": r(df["KW_TP10_bp"].dropna().iloc[-1]), "kw_last_day": str(df["KW_TP10_bp"].dropna().index[-1].date()),
     }
