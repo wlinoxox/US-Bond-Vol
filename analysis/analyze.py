@@ -129,7 +129,7 @@ def main():
     decomp = []
     for name, a, b in [("今年以來", "2025-12-31", asof), ("開戰低點以來", war_low_day, "2026-09-30"),
                        ("6/30 → 8/31", "2026-06-30", "2026-08-31"), ("9 月", "2026-08-31", "2026-09-30"),
-                       ("升息後（9/15 → 10/2）", "2026-09-15", asof)]:
+                       ("涵蓋 9 月升息", "2026-09-15", asof)]:
         n, t, e = chg_bp("UST10Y", a, b), chg_bp("TIPS10Y", a, b), chg_bp("BEI10Y", a, b)
         decomp.append({"period": name, "start": str(pd.Timestamp(a).date()), "end": str(pd.Timestamp(b).date()),
                        "UST10Y": r(n), "TIPS10Y": r(t), "BEI10Y": r(e), "real_share": r(t / n * 100, 0)})
