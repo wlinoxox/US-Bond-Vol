@@ -121,6 +121,7 @@ def main():
         "move_hist_mean": r(hist_move.mean()),
         "bei_0915": r(lvl("BEI10Y", "2026-09-15"), 4), "bei_0917": r(lvl("BEI10Y", "2026-09-17"), 4),
         "bei_asof": r(lvl("BEI10Y", asof), 4),
+        "kw_1231": r(lvl("KW_TP10_bp", "2025-12-31")),
         "kw_0831": r(lvl("KW_TP10_bp", "2026-08-31")), "kw_0922": r(lvl("KW_TP10_bp", "2026-09-22")),
         "kw_last": r(df["KW_TP10_bp"].dropna().iloc[-1]), "kw_last_day": str(df["KW_TP10_bp"].dropna().index[-1].date()),
     }
