@@ -363,7 +363,46 @@ VRP 萎縮、IV 停在 70–80 bp/y；Short Vol 獲利空間縮水 → Sell Vol 
 | BEI | Breakeven Inflation ＝ 名目殖利率 − TIPS 殖利率，市場隱含的通膨預期 |
 | TP（Term Premium） | 持有長債（相對於滾動持有短債）所要求的額外補償 |
 | SPF | Philadelphia Fed 每季發布的專業預測者調查（Survey of Professional Forecasters） |
-| Kim-Wright Model | Fed 研究員 Don Kim 與 Jonathan Wright 提出的三因子無套利期限結構模型，用來拆解「利率預期」與「TP」，Fed 官網定期更新估計值 |
+| Kim-Wright（KW） | Fed 研究員 Don Kim 與 Jonathan Wright 的三因子無套利期限結構模型，把名目殖利率拆成「預期平均短率」與「名目 TP」；定義見下方「TP 模型」 |
+| DKW | D'Amico、Kim、Wei 的模型，同時為名目公債與 TIPS 定價，再拆出預期實質短率、實質 TP、預期通膨、通膨風險溢酬與 TIPS 流動性溢酬；定義見下方「TP 模型」 |
+
+### TP 模型：Kim-Wright 與 DKW
+
+**這類模型在做什麼**：長天期殖利率 ≈ 市場預期的未來短率平均 ＋ 期限溢酬（TP）。預期短率無法直接觀察，所以要靠模型估計；模型與輸入資料不同，拆出來的 TP 就不同，常差 10–20 bp。
+
+**Kim-Wright（KW）**
+
+- **出處**：Don H. Kim、Jonathan H. Wright（2005），Fed 理事會 FEDS 工作論文 2005-33。
+- **模型**：三因子、無套利的仿射期限結構模型。三個因子無法直接觀察，由整條殖利率曲線推估。
+- **輸入**：名目零息公債殖利率，並加入調查機構對未來短率的預測（如 Blue Chip），協助把「預期」和「溢酬」分開。
+- **拆解**：10Y 名目殖利率 ＝ 未來 10 年預期平均短率 ＋ 名目 TP（另有很小的凸性項）。
+- **資料**：FRED `THREEFYTP10`（10 年期零息債 TP），日資料；本筆記用到 2026/9/25。
+- **限制**：只用名目公債，分不出 TP 裡哪些來自實質利率風險、哪些來自通膨風險。
+
+**DKW（D'Amico-Kim-Wei）**
+
+- **出處**：Stefania D'Amico、Don H. Kim、Min Wei（2018），〈Tips from TIPS: The Informational Content of Treasury Inflation-Protected Security Prices〉，*Journal of Financial and Quantitative Analysis*；Kim、Walsh、Wei（2019）在 FEDS Notes 更新。
+- **模型**：同樣是無套利的仿射期限結構模型，但同時為名目公債與 TIPS 定價，另外加入一個 TIPS 專屬的流動性因子。
+- **輸入**：名目公債與 TIPS 殖利率、通膨資料，以及調查機構對短率與通膨的預測。依 Fed 檔案說明，目前版本以截至 2025/11/12 的資料重新估計，改用 Blue Chip 的 1 年期通膨預測（月資料，原為 SPF 季資料），並加入 15 年與 20 年期的名目與 TIPS 殖利率。
+- **拆解**（以下等式在 Fed 公布的資料中精確成立）：
+  - 10Y 名目殖利率 ＝ 預期實質短率 ＋ 實質 TP ＋ 預期通膨 ＋ 通膨風險溢酬
+  - 10Y TIPS 殖利率 ＝ 預期實質短率 ＋ 實質 TP ＋ TIPS 流動性溢酬
+  - 10Y BEI ＝ 預期通膨 ＋ 通膨風險溢酬 − TIPS 流動性溢酬
+  - 名目 TP ＝ 實質 TP ＋ 通膨風險溢酬（可與 Kim-Wright 的名目 TP 對照）
+- **資料**：Fed staff `DKW_updates.csv`，每月更新，屬研究產品而非官方統計，可能修正；本筆記用到 2026/8/31。
+
+| 項目 | Kim-Wright | DKW |
+|---|---|---|
+| 用到的殖利率 | 名目公債 | 名目公債 ＋ TIPS |
+| 其他輸入 | 短率調查預測 | 通膨資料、短率與通膨的調查預測 |
+| 拆得出的成分 | 預期平均短率、名目 TP | 預期實質短率、實質 TP、預期通膨、通膨風險溢酬、TIPS 流動性溢酬 |
+| 更新頻率 | 日資料 | 每月 |
+| 本筆記的用途 | 9 月以後的最新變化、交叉驗證 | 主軸：拆開實質利率與通膨 |
+| 名目 TP 今年以來（至 8/31） | +31 bp | +20 bp |
+
+- **兩者的 TP 不一樣**：輸入資料與估計方式不同，同期名目 TP 差約 10 bp；趨勢方向（7 月起上升）一致。
+- **兩者不完全獨立**：都出自 Fed 的 Don Kim，架構相近。紐約 Fed 的 ACM（Adrian、Crump、Moench，2013）用殖利率的主成分做線性迴歸、不用調查資料，方法不同，適合做獨立的交叉驗證。
+- **使用上的注意**：模型重新估計時，歷史數值會跟著修正；調查資料頻率低，短期的變動主要由模型推估。
 
 ### 政策利率與工具
 
@@ -488,6 +527,8 @@ VRP 萎縮、IV 停在 70–80 bp/y；Short Vol 獲利空間縮水 → Sell Vol 
 
 ### 14.6 用 Kim-Wright 交叉驗證（資料：FRED THREEFYTP10，至 2026/9/25）
 
+模型定義見第 11 節「TP 模型：Kim-Wright 與 DKW」。
+
 | 時點 | Kim-Wright TP 相對 2025 年底（bp） |
 |---|---|
 | 2025 年底水準 | 57.1 bp（基準） |
@@ -503,6 +544,8 @@ VRP 萎縮、IV 停在 70–80 bp/y；Short Vol 獲利空間縮水 → Sell Vol 
 - **對文章的影響**：「本輪拋售不是 TP」在 Kim-Wright 口徑下說服力變弱；「TP 最近才反彈」也不精確，比較像是 7 月起穩定上升、9 月加速。「TP 有序緩升沒有推高 IV」的修正（14.3 第 2 點）因此更重要。
 
 ### 14.7 用 DKW 拆開「實質利率」（資料：Fed staff DKW_updates.csv，至 2026/8/31）
+
+模型定義與拆解等式見第 11 節「TP 模型：Kim-Wright 與 DKW」。
 
 DKW（D'Amico-Kim-Wei）把 10Y 名目殖利率拆成四塊：預期實質短率、實質 TP、預期通膨、通膨風險溢酬；名目 TP = 實質 TP + 通膨風險溢酬。
 
